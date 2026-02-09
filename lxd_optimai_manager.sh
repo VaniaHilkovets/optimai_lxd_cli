@@ -259,7 +259,6 @@ setup_swap() {
 }
 
 
-# Функция: Настройка Docker
 setup_docker() {
     echo ""
     echo "=========================================="
@@ -286,18 +285,34 @@ setup_docker() {
             continue
         fi
 
-        # Если Docker нет или драйвер не fuse-overlayfs — устанавливаем
+        echo "⏳ Ждем 5 секунд после запуска контейнера..."
+        sleep 5
+
         lxc exec $container -- bash <<'EOF'
 set -e
 
-echo "[1/5] Проверка nesting..."
-# Без этого fuse-overlayfs нестабилен
+echo "[1/6] Проверка nesting..."
 
-echo "[2/5] Установка fuse-overlayfs..."
-apt-get update -qq
-apt-get install -y fuse-overlayfs -qq
+# [2/6] Установка fuse-overlayfs с retry
+MAX_RETRIES=3
+for attempt in $(seq 1 $MAX_RETRIES); do
+    echo "Попытка $attempt: установка fuse-overlayfs..."
+    if apt-get update -qq && apt-get install -y fuse-overlayfs -qq; then
+        echo "✓ fuse-overlayfs установлен"
+        break
+    else
+        echo "⚠ Попытка $attempt не удалась"
+        if [ "$attempt" -lt "$MAX_RETRIES" ]; then
+            echo "Ждем 5 секунд перед повтором..."
+            sleep 5
+        else
+            echo "❌ fuse-overlayfs не удалось установить после $MAX_RETRIES попыток"
+            exit 1
+        fi
+    fi
+done
 
-echo "[3/5] Настройка daemon.json..."
+# [3/6] Настройка daemon.json
 mkdir -p /etc/docker
 cat > /etc/docker/daemon.json <<JSON
 {
@@ -305,33 +320,49 @@ cat > /etc/docker/daemon.json <<JSON
 }
 JSON
 
-echo "[4/5] Установка Docker (если нет)..."
+# [4/6] Установка Docker, если нет
 if ! command -v docker >/dev/null 2>&1; then
     curl -fsSL https://get.docker.com | sh
 fi
 
-echo "[5/5] Запуск Docker..."
+# [5/6] Запуск Docker
 systemctl enable docker
 systemctl start docker
 sleep 3
-
 echo "=== Storage Driver ==="
 docker info | grep "Storage Driver"
 EOF
 
-        # Проверка, скачан ли образ
-        if lxc exec $container -- docker images | grep -q "unclecode/crawl4ai.*0.7.3"; then
-            echo "✓ Образ crawl4ai уже есть"
-        else
-            echo "📦 Скачиваю crawl4ai:0.7.3..."
-            lxc exec $container -- docker pull unclecode/crawl4ai:0.7.3
-        fi
+        # [6/6] Скачивание образа с retry
+        IMAGE="unclecode/crawl4ai:0.7.3"
+        MAX_PULL_RETRIES=3
+        for attempt in $(seq 1 $MAX_PULL_RETRIES); do
+            if lxc exec $container -- docker images | grep -q "unclecode/crawl4ai.*0.7.3"; then
+                echo "✓ Образ crawl4ai уже есть"
+                break
+            else
+                echo "📦 Попытка $attempt: скачиваем $IMAGE..."
+                if lxc exec $container -- docker pull $IMAGE; then
+                    echo "✓ Образ скачан"
+                    break
+                else
+                    echo "⚠ Ошибка при скачивании образа"
+                    if [ "$attempt" -lt "$MAX_PULL_RETRIES" ]; then
+                        echo "Ждем 5 секунд перед повтором..."
+                        sleep 5
+                    else
+                        echo "❌ Не удалось скачать $IMAGE после $MAX_PULL_RETRIES попыток"
+                    fi
+                fi
+            fi
+        done
     done
 
     echo ""
     echo "✅ Docker + fuse-overlayfs настроены корректно"
     read -p "Нажми Enter..."
 }
+
 
 
 
