@@ -273,24 +273,31 @@ setup_docker() {
         echo ""
         echo "--- $container ---"
 
+        # Проверка: Docker есть и драйвер fuse-overlayfs
+        DOCKER_OK=$(lxc exec $container -- bash -c '
+            if command -v docker >/dev/null 2>&1; then
+                DRIVER=$(docker info --format "{{.Driver}}" 2>/dev/null || echo "none")
+                [ "$DRIVER" = "fuse-overlayfs" ] && echo "ok"
+            fi
+        ')
+
+        if [ "$DOCKER_OK" = "ok" ]; then
+            echo "✓ Docker уже установлен и fuse-overlayfs активен, пропускаем"
+            continue
+        fi
+
+        # Если Docker нет или драйвер не fuse-overlayfs — устанавливаем
         lxc exec $container -- bash <<'EOF'
 set -e
 
-echo "[1/7] Проверка nesting..."
+echo "[1/5] Проверка nesting..."
 # Без этого fuse-overlayfs нестабилен
-# (настройка должна быть на HOST, но тут хотя бы напоминание)
 
-echo "[2/7] Остановка Docker (если есть)..."
-systemctl stop docker 2>/dev/null || true
-
-echo "[3/7] Удаление старого Docker storage..."
-rm -rf /var/lib/docker
-
-echo "[4/7] Установка fuse-overlayfs..."
+echo "[2/5] Установка fuse-overlayfs..."
 apt-get update -qq
 apt-get install -y fuse-overlayfs -qq
 
-echo "[5/7] Настройка daemon.json..."
+echo "[3/5] Настройка daemon.json..."
 mkdir -p /etc/docker
 cat > /etc/docker/daemon.json <<JSON
 {
@@ -298,14 +305,12 @@ cat > /etc/docker/daemon.json <<JSON
 }
 JSON
 
+echo "[4/5] Установка Docker (если нет)..."
 if ! command -v docker >/dev/null 2>&1; then
-    echo "[6/7] Установка Docker..."
     curl -fsSL https://get.docker.com | sh
-else
-    echo "[6/7] Docker уже установлен"
 fi
 
-echo "[7/7] Запуск Docker..."
+echo "[5/5] Запуск Docker..."
 systemctl enable docker
 systemctl start docker
 sleep 3
@@ -314,13 +319,7 @@ echo "=== Storage Driver ==="
 docker info | grep "Storage Driver"
 EOF
 
-        if lxc exec $container -- docker info | grep -q "fuse-overlayfs"; then
-            echo "✅ $container: fuse-overlayfs активен"
-        else
-            echo "❌ $container: fuse-overlayfs НЕ значитcя"
-            continue
-        fi
-
+        # Проверка, скачан ли образ
         if lxc exec $container -- docker images | grep -q "unclecode/crawl4ai.*0.7.3"; then
             echo "✓ Образ crawl4ai уже есть"
         else
@@ -333,6 +332,7 @@ EOF
     echo "✅ Docker + fuse-overlayfs настроены корректно"
     read -p "Нажми Enter..."
 }
+
 
 
 
