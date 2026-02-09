@@ -61,7 +61,7 @@ install_lxd() {
     # Установка LXD, если отсутствует
     if ! command -v lxc >/dev/null 2>&1; then
         echo "=== Установка LXD через snap ==="
-        snap install lxd --channel=latest/stable
+        snap install lxd --channel=5.21/stable  # Стабильный LTS
         sleep 5
 
         echo "=== Инициализация LXD ==="
