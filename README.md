@@ -1,7 +1,7 @@
 Here is the fully translated and formatted **README.md** in English, ready for your GitHub repository.
 
 
-# OptimAI LXD Node Manager v2.0 🚀
+# OptimAI LXD Node Manager  🚀
 
 [![OptimAI](https://img.shields.io/badge/Project-OptimAI-blue.svg)](https://optimai.network)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
