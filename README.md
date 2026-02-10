@@ -13,7 +13,7 @@ An automated script to run up to **30 OptimAI nodes** on a single VPS using LXD 
 ---
 
 ## 📊 Performance Results
-![Rewards Statistics](https://static.teletype.in/files/5a/04/5a0445f1-344c-4712-9883-820876127e4e.png)
+![Rewards Statistics](https://img2.teletype.in/files/57/3a/573aa2b9-2eca-4387-9d5a-5c8aa90340b0.png)
 *Consistent point farming achieved by running 30 nodes simultaneously.*
 
 ---
