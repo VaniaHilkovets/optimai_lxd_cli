@@ -43,173 +43,99 @@ update_system() {
 install_lxd() {
     echo ""
     echo "=========================================="
-    echo " [2/3] УСТАНОВКА LXD"
+    echo " [2/3] УСТАНОВКА И ПОДГОТОВКА LXD"
     echo "=========================================="
 
-    # Определяем существующие контейнеры
+    # --- ШАГ 0: ПОДГОТОВКА ХОСТА (VPS) ---
+    echo "=== Подготовка хост-системы ==="
+    # Загружаем модули ядра на хосте, иначе overlay2 в контейнере не заработает
+    modprobe overlay
+    modprobe br_netfilter
+    
+    # Добавляем в автозагрузку хоста
+    echo "overlay" > /etc/modules-load.d/lxd-docker.conf
+    echo "br_netfilter" >> /etc/modules-load.d/lxd-docker.conf
+    
+    # Разрешаем пересылку трафика (нужно для сети Docker)
+    sysctl -w net.ipv4.ip_forward=1 > /dev/null
+    echo "✅ Хост подготовлен (модули загружены)"
+
+    # --- ШАГ 1: ПРОВЕРКА СУЩЕСТВУЮЩИХ ---
     EXISTING_CONTAINERS=$(lxc list -c n --format csv 2>/dev/null | grep -E "^${CONTAINER_PREFIX}[0-9]+" | wc -l)
     if [ "$EXISTING_CONTAINERS" -gt 0 ]; then
         MAX_EXISTING=$(lxc list -c n --format csv | grep -E "^${CONTAINER_PREFIX}[0-9]+" | sed "s/${CONTAINER_PREFIX}//" | sort -n | tail -1)
-        echo "Найдено существующих контейнеров: $EXISTING_CONTAINERS"
-        echo "Максимальный номер: ${CONTAINER_PREFIX}${MAX_EXISTING}"
-        echo ""
+        echo "Найдено контейнеров: $EXISTING_CONTAINERS, Max ID: ${CONTAINER_PREFIX}${MAX_EXISTING}"
     else
         EXISTING_CONTAINERS=0
         MAX_EXISTING=0
     fi
 
-    # Установка LXD, если отсутствует
+    # --- ШАГ 2: УСТАНОВКА LXD ---
     if ! command -v lxc >/dev/null 2>&1; then
         echo "=== Установка LXD через snap ==="
-        snap install lxd --channel=5.21/stable  # Стабильный LTS
+        snap install lxd --channel=5.21/stable
         sleep 5
-
-        echo "=== Инициализация LXD ==="
-        lxd init --auto || {
-            echo "❌ Ошибка автоматической инициализации LXD"
-            echo "Попробуйте вручную: lxd init"
-            read -p "Нажмите Enter..." && return 1
-        }
+        lxd init --auto
     else
         echo "✓ LXD уже установлен"
     fi
 
-    # Проверка и создание сети lxdbr0
-    echo "=== Проверка/создание сети lxdbr0 ==="
+    # --- ШАГ 3: НАСТРОЙКА СЕТИ И ХРАНИЛИЩА ---
     if ! lxc network show lxdbr0 >/dev/null 2>&1; then
-        echo "⚠️ Сеть lxdbr0 отсутствует — создаём..."
-        lxc network create lxdbr0 ipv4.nat=true ipv6.address=none || {
-            echo "❌ Не удалось создать сеть lxdbr0"
-            read -p "Нажмите Enter..." && return 1
-        }
-        echo "✅ Сеть lxdbr0 создана"
-    else
-        echo "✓ Сеть lxdbr0 уже существует"
+        lxc network create lxdbr0 ipv4.nat=true ipv6.address=none
     fi
 
-    # Проверка storage pool
     if ! lxc storage show default >/dev/null 2>&1; then
-        echo "⚠️ Storage pool 'default' отсутствует — создаём..."
-        lxc storage create default dir || {
-            echo "❌ Не удалось создать storage pool"
-            read -p "Нажмите Enter..." && exit 1
-        }
-        echo "✅ Storage pool 'default' создан"
+        lxc storage create default dir
     fi
 
-    # ────────────────────────────────────────────────
-    # Исправление профиля default — самый важный блок
-    # ────────────────────────────────────────────────
-    echo ""
-    echo "=== Исправление профиля default ==="
-
-    # Удаляем старый eth0, если существует
+    # Исправление профиля default
     lxc profile device remove default eth0 2>/dev/null || true
+    lxc profile device add default eth0 nic name=eth0 network=lxdbr0 2>/dev/null || true
+    lxc profile device remove default root 2>/dev/null || true
+    lxc profile device add default root disk path=/ pool=default 2>/dev/null || true
 
-    # Добавляем корректный интерфейс с network (ФИКС экранирования)
-    if ! lxc profile show default | grep -q "network: lxdbr0"; then
-        echo "→ Добавляем сетевой интерфейс eth0 → lxdbr0"
-        lxc profile device add default eth0 nic name=eth0 network=lxdbr0 || {
-            echo "❌ Не удалось добавить eth0 в профиль default"
-            read -p "Нажмите Enter..." && return 1
-        }
-        echo "✓ Сетевой интерфейс добавлен"
-    else
-        echo "✓ eth0 уже настроен корректно в профиле"
-    fi
-
-    # Проверяем/восстанавливаем root-диск (ФИКС)
-    if ! lxc profile show default | grep -q "path: /"; then
-        lxc profile device remove default root 2>/dev/null || true
-        lxc profile device add default root disk path=/ pool=default || {
-            echo "❌ Не удалось настроить root диск"
-            read -p "Нажмите Enter..." && return 1
-        }
-        echo "✓ Root диск настроен"
-    else
-        echo "✓ Root диск уже настроен"
-    fi
-
-    echo "✅ Профиль default исправлен"
-
-    # Прикрепляем сеть ко всем существующим контейнерам
-    echo ""
-    echo "=== Прикрепление сети к существующим контейнерам ==="
-    for cont in $(lxc list -c n --format csv | grep -E "^${CONTAINER_PREFIX}[0-9]+"); do
-        echo -n "Проверка сети для $cont... "
-        if lxc config device show "$cont" eth0 2>/dev/null | grep -q "network: lxdbr0"; then
-            echo "уже подключена"
-        else
-            lxc network attach lxdbr0 "$cont" eth0 2>/dev/null && echo "OK" || echo "пропуск"
-        fi
-    done
-
-    # Запрос количества контейнеров
+    # --- ШАГ 4: СОЗДАНИЕ КОНТЕЙНЕРОВ ---
     read -p "Сколько ВСЕГО контейнеров нужно? [1-30, сейчас: $EXISTING_CONTAINERS]: " TOTAL_CONTAINERS
-    if ! [[ "$TOTAL_CONTAINERS" =~ ^[0-9]+$ ]] || [ "$TOTAL_CONTAINERS" -lt 1 ] || [ "$TOTAL_CONTAINERS" -gt 30 ]; then
-        echo "❌ Некорректное число"
+    if ! [[ "$TOTAL_CONTAINERS" =~ ^[0-9]+$ ]] || [ "$TOTAL_CONTAINERS" -le "$EXISTING_CONTAINERS" ]; then
+        echo "⚠️ Новые контейнеры не требуются или введено неверное число"
         read -p "Нажмите Enter..." && return
     fi
 
-    if [ "$TOTAL_CONTAINERS" -le "$EXISTING_CONTAINERS" ]; then
-        echo "⚠️ Новые контейнеры не требуются"
-        read -p "Нажмите Enter..." && return
-    fi
-
-    NEW_CONTAINERS=$((TOTAL_CONTAINERS - EXISTING_CONTAINERS))
-    echo "Будет создано $NEW_CONTAINERS новых контейнеров (от ${CONTAINER_PREFIX}$((MAX_EXISTING + 1)) до ${CONTAINER_PREFIX}${TOTAL_CONTAINERS})"
-    echo ""
-    read -p "Подтвердить создание? [Y/n]: " confirm
-    [[ "$confirm" =~ ^[Nn]$ ]] && { echo "Отменено"; read -p "Enter..."; return; }
-
-    # Создание новых контейнеров (ФИКС синтаксиса)
-    echo "=== Создание контейнеров ==="
     for i in $(seq $((MAX_EXISTING + 1)) $TOTAL_CONTAINERS); do
-        name="${CONTAINER_PREFIX}${i}"  # ФИКС: убрал local
-        echo "Создаю $name..."
+        name="${CONTAINER_PREFIX}${i}"
+        echo "🚀 Создаю и настраиваю $name..."
         
-        lxc launch ubuntu:22.04 "$name" || { echo "❌ Ошибка создания $name"; continue; }
+        lxc launch ubuntu:22.04 "$name" || continue
 
-        # Настройки для запуска Docker внутри (ФИКС синтаксиса)
+        # ══════════════════════════════════════════════════
+        # УСИЛЕННЫЕ НАСТРОЙКИ ДЛЯ DOCKER (OVERLAY2 FIX)
+        # ══════════════════════════════════════════════════
+        
+        # 1. Привилегии и вложенность
         lxc config set "$name" security.privileged true
         lxc config set "$name" security.nesting true
-		#lxc config set "$name" security.syscalls.intercept.sysctl true   # <- добавляем!
-        lxc config set "$name" security.syscalls.intercept.mknod true
-        #lxc config set "$name" security.syscalls.intercept.setxattr true
-        lxc config set "$name" limits.processes 1000
+        
+        # 2. Проброс модулей ядра
+        lxc config set "$name" linux.kernel_modules overlay,br_netfilter,ip_tables,iptable_nat,xt_conntrack
+        
+        # 3. AppArmor и монтирование (Критично для overlay2)
+        lxc config set "$name" raw.lxc "lxc.apparmor.profile=unconfined
+lxc.mount.auto=proc:rw sys:rw cgroup:rw
+lxc.cgroup.devices.allow=a
+lxc.cap.drop="
 
-        # Привязка сети
-        lxc network attach lxdbr0 "$name" eth0 2>/dev/null || true
-
-        echo "✓ $name настроен"
-        sleep 2
+        # 4. Лимиты
+        lxc config set "$name" limits.processes 2500
+        
+        # Перезагружаем, чтобы все raw.lxc применились сразу
+        lxc restart "$name"
+        echo "✓ $name готов к работе"
+        sleep 1
     done
 
-    echo "Ожидание запуска контейнеров..."
-    sleep 15
-
     echo ""
-    echo "=== Текущий список контейнеров ==="
-    lxc list
-
-    # Улучшенная проверка интернета (ФИКС)
-    echo ""
-    echo "=== Проверка интернета (${CONTAINER_PREFIX}1) ==="
-    if lxc info "${CONTAINER_PREFIX}1" >/dev/null 2>&1; then
-        if lxc exec "${CONTAINER_PREFIX}1" -- bash -c "ping -c1 -W3 8.8.8.8 >/dev/null 2>&1 || curl -s --max-time 5 http://1.1.1.1 >/dev/null 2>&1"; then
-            echo "✅ Интернет работает"
-        else
-            echo "⚠️ Интернет НЕ работает в ${CONTAINER_PREFIX}1"
-            echo "   Фикс:"
-            echo "   lxc network attach lxdbr0 ${CONTAINER_PREFIX}1 eth0"
-            echo "   lxc restart ${CONTAINER_PREFIX}1"
-        fi
-    else
-        echo "⚠️ Контейнер ${CONTAINER_PREFIX}1 не существует"
-    fi
-
-    echo ""
-    echo "✅ Установка и настройка LXD завершена"
+    echo "✅ Все новые контейнеры созданы и настроены с поддержкой Docker/Overlay2"
     read -p "Нажмите Enter для продолжения..."
 }
 
@@ -262,7 +188,7 @@ setup_swap() {
 setup_docker() {
     echo ""
     echo "=========================================="
-    echo "  [3/3] НАСТРОЙКА DOCKER (FIXED)"
+    echo "  [3/3] НАСТРОЙКА DOCKER (ULTRA-FIXED)"
     echo "=========================================="
 
     CONTAINERS=$(lxc list -c n --format csv | grep "^${CONTAINER_PREFIX}")
@@ -270,18 +196,21 @@ setup_docker() {
 
     for container in $CONTAINERS; do
         echo ""
-        echo "--- $container ---"
+        echo "╔══════════════════════════════════════╗"
+        echo "║  Настройка: $container"
+        echo "╚══════════════════════════════════════╝"
 
-        # Проверка: Docker есть и драйвер fuse-overlayfs
+        # Проверка: Docker есть и драйвер overlay2 (ФИКС: меняем на overlay2)
         DOCKER_OK=$(lxc exec $container -- bash -c '
             if command -v docker >/dev/null 2>&1; then
                 DRIVER=$(docker info --format "{{.Driver}}" 2>/dev/null || echo "none")
-                [ "$DRIVER" = "fuse-overlayfs" ] && echo "ok"
+                # Теперь проверяем overlay2 вместо fuse-overlayfs
+                [ "$DRIVER" = "overlay2" ] && echo "ok"
             fi
         ')
 
         if [ "$DOCKER_OK" = "ok" ]; then
-            echo "✓ Docker уже установлен и fuse-overlayfs активен, пропускаем"
+            echo "✓ Docker уже установлен и overlay2 активен, пропускаем"
             continue
         fi
 
@@ -291,87 +220,107 @@ setup_docker() {
         lxc exec $container -- bash <<'EOF'
 set -e
 
-echo "[0/6] ФИКС CONTAINERD (sysctl permission denied)..."
+echo ""
+echo "════════════════════════════════════════"
+echo " УСТАНОВКА DOCKER С OVERLAY2 ДРАЙВЕРОМ"
+echo "════════════════════════════════════════"
+echo ""
 
-# ФИКС: downgrade containerd если сломанная версия
-CURRENT_VER=$(dpkg -l containerd.io 2>/dev/null | awk '/^ii/ {print $3}' || echo "none")
-if [[ "$CURRENT_VER" == *"1.7.28-2"* ]] || [[ "$CURRENT_VER" =~ ^1.7\.[0-9]+ ]]; then
-    echo "⚠️ Проблемная containerd $CURRENT_VER → downgrade..."
-    apt-get update -qq && \
-    apt-get install -y containerd.io=1.7.28-1~ubuntu.22.04~jammy --allow-downgrades --no-install-recommends -qq && \
-    apt-mark hold containerd.io -qq
-    echo "✓ Containerd пофикшен"
+# [1/5] Удаляем старый Docker, если есть
+echo "[1/5] Очистка старых версий Docker..."
+systemctl stop docker 2>/dev/null || true
+apt-get remove -y docker docker-engine docker.io containerd runc 2>/dev/null || true
+rm -rf /var/lib/docker /etc/docker
+
+# [2/5] Установка Docker с офсайта
+echo "[2/5] Установка свежего Docker..."
+curl -fsSL https://get.docker.com -o /tmp/get-docker.sh
+sh /tmp/get-docker.sh
+rm /tmp/get-docker.sh
+
+# [3/5] Настройка daemon.json для overlay2
+echo "[3/5] Настройка overlay2 драйвера..."
+mkdir -p /etc/docker
+cat > /etc/docker/daemon.json <<JSON
+{
+  "storage-driver": "overlay2",
+  "log-driver": "json-file",
+  "log-opts": {
+    "max-size": "10m",
+    "max-file": "3"
+  }
+}
+JSON
+
+# [4/5] Запуск Docker
+echo "[4/5] Запуск Docker..."
+systemctl daemon-reload
+systemctl enable docker
+systemctl restart docker
+sleep 5
+
+# Проверка драйвера
+echo ""
+echo "════════════════════════════════════════"
+DRIVER=$(docker info --format "{{.Driver}}" 2>/dev/null || echo "ОШИБКА")
+if [ "$DRIVER" = "overlay2" ]; then
+    echo "✅ Storage Driver: overlay2 (ОК)"
+else
+    echo "❌ Storage Driver: $DRIVER (НЕ ОК!)"
+    echo ""
+    echo "Полная информация:"
+    docker info
+    exit 1
 fi
+echo "════════════════════════════════════════"
+echo ""
 
-echo "[1/6] Проверка nesting..."
-
-# [2/6] Установка fuse-overlayfs с retry
+# [5/5] Скачивание образа crawl4ai
+echo "[5/5] Скачивание образа crawl4ai..."
+IMAGE="unclecode/crawl4ai:0.7.3"
 MAX_RETRIES=3
+
 for attempt in $(seq 1 $MAX_RETRIES); do
-    echo "Попытка $attempt: установка fuse-overlayfs..."
-    if apt-get update -qq && apt-get install -y fuse-overlayfs -qq; then
-        echo "✓ fuse-overlayfs установлен"
+    if docker images | grep -q "unclecode/crawl4ai.*0.7.3"; then
+        echo "✅ Образ crawl4ai уже есть"
         break
     else
-        echo "⚠ Попытка $attempt не удалась"
-        if [ "$attempt" -lt "$MAX_RETRIES" ]; then
-            echo "Ждем 5 секунд перед повтором..."
-            sleep 5
+        echo "📦 Попытка $attempt: скачиваем $IMAGE..."
+        if timeout 300 docker pull $IMAGE; then
+            echo "✅ Образ скачан успешно"
+            break
         else
-            echo "❌ fuse-overlayfs не удалось установить после $MAX_RETRIES попыток"
-            exit 1
+            echo "⚠ Ошибка при скачивании"
+            if [ "$attempt" -lt "$MAX_RETRIES" ]; then
+                echo "Ждем 10 секунд перед повтором..."
+                sleep 10
+            else
+                echo "❌ Не удалось скачать после $MAX_RETRIES попыток"
+                exit 1
+            fi
         fi
     fi
 done
 
-# [3/6] Настройка daemon.json
-mkdir -p /etc/docker
-cat > /etc/docker/daemon.json <<JSON
-{
-  "storage-driver": "fuse-overlayfs"
-}
-JSON
-
-# [4/6] Установка Docker, если нет
-if ! command -v docker >/dev/null 2>&1; then
-    curl -fsSL https://get.docker.com | sh
-fi
-
-# [5/6] Запуск Docker
-systemctl enable docker
-systemctl start docker
-sleep 3
-echo "=== Storage Driver ==="
-docker info | grep "Storage Driver"
+echo ""
+echo "✅ Docker настроен корректно!"
+docker --version
+docker info | grep -E "Storage Driver|Logging Driver"
 EOF
 
-        # [6/6] Скачивание образа с retry
-        IMAGE="unclecode/crawl4ai:0.7.3"
-        MAX_PULL_RETRIES=3
-        for attempt in $(seq 1 $MAX_PULL_RETRIES); do
-            if lxc exec $container -- docker images | grep -q "unclecode/crawl4ai.*0.7.3"; then
-                echo "✓ Образ crawl4ai уже есть"
-                break
-            else
-                echo "📦 Попытка $attempt: скачиваем $IMAGE..."
-                if lxc exec $container -- docker pull $IMAGE; then
-                    echo "✓ Образ скачан"
-                    break
-                else
-                    echo "⚠ Ошибка при скачивании образа"
-                    if [ "$attempt" -lt "$MAX_PULL_RETRIES" ]; then
-                        echo "Ждем 5 секунд перед повтором..."
-                        sleep 5
-                    else
-                        echo "❌ Не удалось скачать $IMAGE после $MAX_PULL_RETRIES попыток"
-                    fi
-                fi
-            fi
-        done
+        if [ $? -eq 0 ]; then
+            echo "✅ $container готов"
+        else
+            echo "❌ Ошибка настройки $container"
+        fi
+        
+        sleep 2
     done
 
     echo ""
-    echo "✅ Docker + fuse-overlayfs настроены корректно"
+    echo "╔══════════════════════════════════════╗"
+    echo "║  ✅ Docker + overlay2 настроены!     ║"
+    echo "╚══════════════════════════════════════╝"
     read -p "Нажми Enter..."
 }
 
@@ -574,62 +523,101 @@ EOF
 # ============================================
 
 start_nodes() {
-local max=$(get_max_container)
-echo "Какие ноды запустить? (например: 5, 1-10 или Enter для всех 1-$max)"
-read -r range
-result=$(parse_range "$range")
-if [ $? -ne 0 ]; then
-echo "✗ $result"
-read -p "Нажми Enter для продолжения..."
-return
-fi
-start=$(echo $result | cut -d' ' -f1)
-end=$(echo $result | cut -d' ' -f2)
-if [ "$start" -eq "$end" ]; then
-echo "Запуск ${CONTAINER_PREFIX}${start}..."
-else
-echo "Запуск нод с ${CONTAINER_PREFIX}${start} по ${CONTAINER_PREFIX}${end}..."
-fi
-for i in $(seq $start $end); do
-echo "[$i] Запуск ${CONTAINER_PREFIX}${i}..."
-lxc exec ${CONTAINER_PREFIX}${i} -- bash << 'SCRIPT'
+    local max=$(get_max_container)
+    echo "Какие ноды запустить? (например: 5, 1-10 или Enter для всех 1-$max)"
+    read -r range
+    result=$(parse_range "$range")
+    if [ $? -ne 0 ]; then
+        echo "✗ $result"
+        read -p "Нажми Enter для продолжения..."
+        return
+    fi
+    start=$(echo $result | cut -d' ' -f1)
+    end=$(echo $result | cut -d' ' -f2)
+    
+    if [ "$start" -eq "$end" ]; then
+        echo "Запуск ${CONTAINER_PREFIX}${start}..."
+    else
+        echo "Запуск нод с ${CONTAINER_PREFIX}${start} по ${CONTAINER_PREFIX}${end}..."
+    fi
+    
+    for i in $(seq $start $end); do
+        echo ""
+        echo "╔══════════════════════════════════════╗"
+        echo "║  Запуск ${CONTAINER_PREFIX}${i}"
+        echo "╚══════════════════════════════════════╝"
+        
+        lxc exec ${CONTAINER_PREFIX}${i} -- bash << 'SCRIPT'
+set -e
+
 mkdir -p /var/log/optimai
-echo "[DEBUG] Остановка старых процессов..."
-pkill -9 -f 'optimai-cli' 2>/dev/null
-sleep 1
-echo "[DEBUG] Проверка Docker..."
+
+echo "[1/6] Остановка старых процессов..."
+pkill -9 -f 'optimai-cli' 2>/dev/null || true
+docker stop optimai_crawl4ai_0_7_3 2>/dev/null || true
+docker rm optimai_crawl4ai_0_7_3 2>/dev/null || true
+sleep 2
+
+echo "[2/6] Проверка Docker..."
 if ! systemctl is-active docker >/dev/null 2>&1; then
-echo "[DEBUG] Запуск Docker..."
-systemctl start docker
-sleep 3
+    echo "→ Запуск Docker..."
+    systemctl start docker
+    sleep 5
 fi
-echo "[DEBUG] Проверка optimai-cli..."
+
+echo "[3/6] Проверка storage driver..."
+DRIVER=$(docker info --format "{{.Driver}}" 2>/dev/null || echo "none")
+if [ "$DRIVER" != "overlay2" ]; then
+    echo "❌ КРИТИЧНО: Docker использует '$DRIVER' вместо overlay2!"
+    echo "Запусти пункт 3 (Настройка Docker) из главного меню"
+    exit 1
+fi
+echo "✓ Storage Driver: overlay2"
+
+echo "[4/6] Проверка optimai-cli..."
 if [ ! -f /usr/local/bin/optimai-cli ]; then
-echo "✗ ОШИБКА: optimai-cli не найден!"
-exit 1
+    echo "✗ ОШИБКА: optimai-cli не найден!"
+    exit 1
 fi
-echo "[DEBUG] Запуск ноды..."
+
+echo "[5/6] Запуск ноды..."
 cd /root
+rm -f /var/log/optimai/node.log
 nohup /usr/local/bin/optimai-cli node start >> /var/log/optimai/node.log 2>&1 &
-sleep 3
+sleep 5
+
+echo "[6/6] Проверка запуска..."
 if pgrep -f 'optimai-cli' >/dev/null; then
-PID=$(pgrep -f 'optimai-cli')
-echo "✓ Процесс запущен (PID: $PID)"
+    PID=$(pgrep -f 'optimai-cli')
+    echo "✅ Процесс запущен (PID: $PID)"
+    echo ""
+    echo "Первые строки лога:"
+    head -20 /var/log/optimai/node.log 2>/dev/null || echo "Лог пуст"
 else
-echo "✗ Ошибка запуска! Лог:"
-if [ -f /var/log/optimai/node.log ]; then
-tail -20 /var/log/optimai/node.log
-else
-echo "Лог файл не создан"
-fi
-exit 1
+    echo "❌ Ошибка запуска!"
+    echo ""
+    echo "Содержимое лога:"
+    if [ -f /var/log/optimai/node.log ]; then
+        cat /var/log/optimai/node.log
+    else
+        echo "Лог файл не создан"
+    fi
+    exit 1
 fi
 SCRIPT
-echo ""
-sleep 2
-done
-echo "✓ Запуск завершен"
-read -p "Нажми Enter для продолжения..."
+        
+        if [ $? -eq 0 ]; then
+            echo "✅ ${CONTAINER_PREFIX}${i} запущен"
+        else
+            echo "❌ Ошибка запуска ${CONTAINER_PREFIX}${i}"
+        fi
+        
+        sleep 2
+    done
+    
+    echo ""
+    echo "✅ Запуск завершен"
+    read -p "Нажми Enter для продолжения..."
 }
 
 
@@ -725,8 +713,12 @@ check_status() {
     echo "=== СТАТУС НОД ==="
     for i in $(seq 1 $(get_max_container)); do
         if lxc list -c n --format csv | grep -q "^${CONTAINER_PREFIX}${i}$"; then
-            status=$(lxc exec ${CONTAINER_PREFIX}${i} -- pgrep -f "optimai-cli" >/dev/null 2>&1 && echo "РАБОТАЕТ" || echo "ОСТАНОВЛЕНА")
-            echo "${CONTAINER_PREFIX}${i}: $status"
+            status=$(lxc exec ${CONTAINER_PREFIX}${i} -- pgrep -f "optimai-cli" >/dev/null 2>&1 && echo "🟢 РАБОТАЕТ" || echo "🔴 ОСТАНОВЛЕНА")
+            
+            # Дополнительно проверяем драйвер Docker
+            driver=$(lxc exec ${CONTAINER_PREFIX}${i} -- docker info --format "{{.Driver}}" 2>/dev/null || echo "none")
+            
+            echo "${CONTAINER_PREFIX}${i}: $status | Docker: $driver"
         fi
     done
     read -p "Нажми Enter..."
@@ -736,7 +728,7 @@ check_status() {
 while true; do
     clear
     echo "=========================================="
-    echo " LXD + DOCKER + OPTIMAI MANAGER"
+    echo " LXD + DOCKER + OPTIMAI MANAGER v2.0"
     echo "=========================================="
     echo ""
 
