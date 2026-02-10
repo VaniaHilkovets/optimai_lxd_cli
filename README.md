@@ -1,6 +1,6 @@
 Here is the fully translated and formatted **README.md** in English, ready for your GitHub repository.
 
-```markdown
+
 # OptimAI LXD Node Manager v2.0 🚀
 
 [![OptimAI](https://img.shields.io/badge/Project-OptimAI-blue.svg)](https://optimai.network)
