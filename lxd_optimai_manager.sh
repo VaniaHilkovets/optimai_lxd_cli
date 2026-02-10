@@ -291,6 +291,18 @@ setup_docker() {
         lxc exec $container -- bash <<'EOF'
 set -e
 
+echo "[0/6] ФИКС CONTAINERD (sysctl permission denied)..."
+
+# ФИКС: downgrade containerd если сломанная версия
+CURRENT_VER=$(dpkg -l containerd.io 2>/dev/null | awk '/^ii/ {print $3}' || echo "none")
+if [[ "$CURRENT_VER" == *"1.7.28-2"* ]] || [[ "$CURRENT_VER" =~ ^1.7\.[0-9]+ ]]; then
+    echo "⚠️ Проблемная containerd $CURRENT_VER → downgrade..."
+    apt-get update -qq && \
+    apt-get install -y containerd.io=1.7.28-1~ubuntu.22.04~jammy --allow-downgrades --no-install-recommends -qq && \
+    apt-mark hold containerd.io -qq
+    echo "✓ Containerd пофикшен"
+fi
+
 echo "[1/6] Проверка nesting..."
 
 # [2/6] Установка fuse-overlayfs с retry
@@ -362,6 +374,7 @@ EOF
     echo "✅ Docker + fuse-overlayfs настроены корректно"
     read -p "Нажми Enter..."
 }
+
 
 
 
