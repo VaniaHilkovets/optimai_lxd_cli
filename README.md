@@ -1,4 +1,3 @@
-Here is the fully translated and formatted **README.md** in English, ready for your GitHub repository.
 
 
 # OptimAI LXD Node Manager  🚀
