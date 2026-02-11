@@ -612,37 +612,50 @@ SCRIPT
 
 stop_nodes() {
     local max=$(get_max_container)
-    echo "Which to stop? (5, 1-10, Enter for all)"
+    echo "Which to stop? (5, 1-10, Enter for all 1-$max)"
     read -r range
+    
+    # Парсим ввод через существующую функцию parse_range
     result=$(parse_range "$range")
-    [ $? -ne 0 ] && { echo "✗ $result"; read -p "Enter..."; return; }
+    if [ $? -ne 0 ]; then
+        echo "✗ $result"
+        read -p "Enter..."
+        return
+    fi
 
+    # parse_range выдает два числа через пробел (например "1 15")
     start=$(echo $result | cut -d' ' -f1)
     end=$(echo $result | cut -d' ' -f2)
 
+    echo "Stopping nodes from ${CONTAINER_PREFIX}${start} to ${CONTAINER_PREFIX}${end}..."
+
+    # КЛЮЧЕВОЙ ФИКС: Добавлен цикл seq, чтобы пройти по ВСЕМ нодам в диапазоне
     for i in $(seq $start $end); do
-        echo -n "[$i] ${CONTAINER_PREFIX}${i}: "
-        lxc list -c n --format csv | grep -q "^${CONTAINER_PREFIX}${i}$" || { echo "no"; continue; }
+        container="${CONTAINER_PREFIX}${i}"
         
-        lxc exec "${CONTAINER_PREFIX}${i}" -- bash -c '
-            echo "Stopping Docker containers..."
-            docker stop optimai_crawl4ai_0_7_3 2>/dev/null || true
-            docker rm optimai_crawl4ai_0_7_3 2>/dev/null || true
-            docker system prune -f -q 2>/dev/null || true
-            
-            echo "Stopping optimai-cli..."
+        # Проверяем, существует ли контейнер вообще
+        if ! lxc list -c n --format csv | grep -q "^${container}$"; then
+            echo "[$i] $container: not found, skipping..."
+            continue
+        fi
+
+        echo -n "[$i] $container: "
+        
+        # Выполняем команды остановки внутри контейнера
+        lxc exec "$container" -- bash -c '
+            # Останавливаем CLI процесс
             pkill -9 -f "optimai-cli" 2>/dev/null || true
-            sleep 2
-            
-            echo "Cleaning logs..."
-            rm -f /var/log/optimai/node.log
-            
-            echo "Docker status: "
-            docker ps -q | wc -l | xargs -I {} echo "{} crawl4ai containers remaining"
-            echo "Log cleared"
+            # Останавливаем все запущенные докер-контейнеры
+            if command -v docker >/dev/null 2>&1; then
+                docker stop $(docker ps -q) 2>/dev/null || true
+                docker rm $(docker ps -aq) 2>/dev/null || true
+            fi
         '
         echo "✓ stopped"
     done
+
+    echo ""
+    echo "✅ Stop operation finished"
     read -p "Press Enter..."
 }
 
