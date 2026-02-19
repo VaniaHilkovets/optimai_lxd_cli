@@ -674,30 +674,34 @@ stop_nodes() {
 # ФУНКЦИЯ: Удаление всех контейнеров LXD
 # ============================================
 delete_all_containers() {
-    CONTAINERS=$(lxc list -c n --format csv | grep "^${CONTAINER_PREFIX}")
-    if [ -z "$CONTAINERS" ]; then
-        echo "Нет контейнеров для удаления"
-        read -p "Нажми Enter..." 
-        return
-    fi
+    local max=$(get_max_container)
+    echo "Какие контейнеры удалить? (5, 1-10, Enter=все)"
+    read -r range
+    result=$(parse_range "$range")
+    [ $? -ne 0 ] && { echo "✗ $result"; read -p "Enter..."; return; }
 
-    echo "Будут удалены все контейнеры (${CONTAINER_PREFIX}*):"
-    echo "$CONTAINERS"
+    start=$(echo $result | cut -d' ' -f1)
+    end=$(echo $result | cut -d' ' -f2)
+
+    echo "Будут удалены контейнеры с ${CONTAINER_PREFIX}${start} по ${CONTAINER_PREFIX}${end}"
     read -p "Подтвердить удаление? [y/N]: " confirm
-    if [[ ! "$confirm" =~ ^[Yy]$ ]]; then
-        echo "Отмена"
-        read -p "Enter..." 
-        return
-    fi
+    [[ ! "$confirm" =~ ^[Yy]$ ]] && { echo "Отмена"; read -p "Enter..."; return; }
 
-    for c in $CONTAINERS; do
-        echo "Останавливаю $c..."
-        lxc stop "$c" --force 2>/dev/null || true
-        echo "Удаляю $c..."
-        lxc delete "$c" 2>/dev/null || echo "Ошибка удаления $c"
+    for i in $(seq $start $end); do
+        container="${CONTAINER_PREFIX}${i}"
+        if ! lxc list -c n --format csv | grep -q "^${container}$"; then
+            echo "[$i] $container: не найден, пропускаю"
+            continue
+        fi
+        echo -n "[$i] $container: останавливаю... "
+        lxc stop "$container" --force 2>/dev/null || true
+        echo -n "удаляю... "
+        lxc delete "$container" 2>/dev/null || true
+        echo "✓"
     done
 
-    echo "✅ Все контейнеры удалены"
+    echo ""
+    echo "✅ Готово"
     read -p "Нажми Enter..."
 }
 
