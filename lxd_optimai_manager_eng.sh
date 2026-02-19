@@ -663,30 +663,34 @@ stop_nodes() {
 # FUNCTION: Delete all LXD containers
 # ============================================
 delete_all_containers() {
-    CONTAINERS=$(lxc list -c n --format csv | grep "^${CONTAINER_PREFIX}")
-    if [ -z "$CONTAINERS" ]; then
-        echo "No containers to delete"
-        read -p "Press Enter..." 
-        return
-    fi
+    local max=$(get_max_container)
+    echo "Which containers to delete? (5, 1-10, Enter for all)"
+    read -r range
+    result=$(parse_range "$range")
+    [ $? -ne 0 ] && { echo "✗ $result"; read -p "Enter..."; return; }
 
-    echo "Deleting all containers (${CONTAINER_PREFIX}*):"
-    echo "$CONTAINERS"
+    start=$(echo $result | cut -d' ' -f1)
+    end=$(echo $result | cut -d' ' -f2)
+
+    echo "Will delete containers from ${CONTAINER_PREFIX}${start} to ${CONTAINER_PREFIX}${end}"
     read -p "Confirm deletion? [y/N]: " confirm
-    if [[ ! "$confirm" =~ ^[Yy]$ ]]; then
-        echo "Cancelled"
-        read -p "Enter..." 
-        return
-    fi
+    [[ ! "$confirm" =~ ^[Yy]$ ]] && { echo "Cancelled"; read -p "Enter..."; return; }
 
-    for c in $CONTAINERS; do
-        echo "Stopping $c..."
-        lxc stop "$c" --force 2>/dev/null || true
-        echo "Deleting $c..."
-        lxc delete "$c" 2>/dev/null || echo "Error deleting $c"
+    for i in $(seq $start $end); do
+        container="${CONTAINER_PREFIX}${i}"
+        if ! lxc list -c n --format csv | grep -q "^${container}$"; then
+            echo "[$i] $container: not found, skipping"
+            continue
+        fi
+        echo -n "[$i] $container: stopping... "
+        lxc stop "$container" --force 2>/dev/null || true
+        echo -n "deleting... "
+        lxc delete "$container" 2>/dev/null || true
+        echo "✓"
     done
 
-    echo "✅ All containers deleted"
+    echo ""
+    echo "✅ Done"
     read -p "Press Enter..."
 }
 
