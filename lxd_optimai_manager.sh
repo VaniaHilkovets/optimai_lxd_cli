@@ -590,7 +590,7 @@ login_optimai() {
             command -v expect >/dev/null || { apt-get update -qq && apt-get install -y --no-install-recommends expect -qq >/dev/null; }
             expect <<'EOF'
 set timeout 60
-spawn /usr/local/bin/optimai-cli auth login
+spawn /usr/local/bin/optimai-cli auth login --legacy
 expect {
     \"Already logged in\" {
         puts \"✓ Уже залогинен\"
@@ -636,6 +636,7 @@ EOF
     echo "Логин завершён"
     read -p "Нажми Enter..."
 }
+
 
 # ============================================
 # БЛОК 3: УПРАВЛЕНИЕ НОДАМИ
