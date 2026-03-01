@@ -513,9 +513,9 @@ JSON
     read -p "Нажми Enter..."
 }
 
-
-
-
+# ============================================
+# ИСПРАВЛЕНО: Обновление через optimai-cli update
+# ============================================
 update_optimai() {
     echo ""
     echo "=========================================="
@@ -530,10 +530,12 @@ update_optimai() {
     start=$(echo $result | cut -d' ' -f1)
     end=$(echo $result | cut -d' ' -f2)
 
+    LXC_LIST=$(lxc list -c n --format csv)
+
     for i in $(seq $start $end); do
         echo -n "[$i] ${CONTAINER_PREFIX}${i}: "
-        lxc list -c n --format csv | grep -q "^${CONTAINER_PREFIX}${i}$" || { echo "нет"; continue; }
-        lxc exec ${CONTAINER_PREFIX}${i} -- /usr/local/bin/optimai-cli update 2>/dev/null && echo "OK" || echo "ошибка"
+        echo "$LXC_LIST" | grep -q "^${CONTAINER_PREFIX}${i}$" || { echo "нет"; continue; }
+        lxc exec ${CONTAINER_PREFIX}${i} -- /usr/local/bin/optimai-cli update && echo "OK" || echo "ошибка"
     done
     echo ""
     echo "Обновление завершено"
@@ -637,7 +639,6 @@ EOF
     read -p "Нажми Enter..."
 }
 
-
 # ============================================
 # БЛОК 3: УПРАВЛЕНИЕ НОДАМИ
 # ============================================
@@ -740,6 +741,9 @@ SCRIPT
     read -p "Нажми Enter для продолжения..."
 }
 
+# ============================================
+# ИСПРАВЛЕНО: Остановка нод
+# ============================================
 stop_nodes() {
     local max=$(get_max_container)
     echo "Какие ноды остановить? (5, 1-10, Enter для всех 1-$max)"
@@ -768,13 +772,13 @@ stop_nodes() {
         fi
         echo -n "[$i] $container: "
         lxc exec "$container" -- bash -c '
-            # 1. Сначала убиваем optimai-cli чтобы не перезапустил Docker
+            # 1. Убиваем все процессы optimai
             pkill -9 -f "optimai-cli" 2>/dev/null || true
+            pkill -9 -f "optimai" 2>/dev/null || true
             sleep 1
-            # 2. Потом останавливаем Docker контейнер
+            # 2. Останавливаем и удаляем все docker контейнеры
             if command -v docker >/dev/null 2>&1; then
-                RUNNING=$(docker ps -q)
-                [ -n "$RUNNING" ] && docker stop --time=5 $RUNNING 2>/dev/null || true
+                docker ps -q | xargs -r docker stop --time=5 2>/dev/null || true
             fi
         ' || true
         echo "✓ остановлен"
@@ -784,9 +788,6 @@ stop_nodes() {
     echo "✅ Остановка завершена"
     read -p "Нажми Enter..."
 }
-
-
-
 
 # ============================================
 # ФУНКЦИЯ: Удаление контейнеров LXD
