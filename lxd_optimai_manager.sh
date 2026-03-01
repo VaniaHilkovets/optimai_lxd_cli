@@ -535,7 +535,12 @@ update_optimai() {
     for i in $(seq $start $end); do
         echo -n "[$i] ${CONTAINER_PREFIX}${i}: "
         echo "$LXC_LIST" | grep -q "^${CONTAINER_PREFIX}${i}$" || { echo "нет"; continue; }
-        lxc exec ${CONTAINER_PREFIX}${i} -- /usr/local/bin/optimai-cli update && echo "OK" || echo "ошибка"
+        lxc exec ${CONTAINER_PREFIX}${i} -- bash -c '
+            curl -fsSL https://cli-node.optimai.network/optimai_cli_ubuntu -o /tmp/optimai-new &&
+            chmod +x /tmp/optimai-new &&
+            mv /tmp/optimai-new /usr/local/bin/optimai-cli &&
+            optimai-cli --version
+        ' && echo "OK" || echo "FAIL"
     done
     echo ""
     echo "Обновление завершено"
