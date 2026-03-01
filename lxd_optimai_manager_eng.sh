@@ -25,7 +25,7 @@ update_system() {
     echo " [1/3] SYSTEM UPDATE"
     echo "=========================================="
     echo ""
-    echo "=== Checking VPS status ==="
+    echo "=== VPS status check ==="
     echo "Hostname: $(hostname)"
     echo "OS: $(lsb_release -d | cut -f2)"
     echo "Kernel: $(uname -r)"
@@ -46,7 +46,7 @@ update_system() {
 install_lxd() {
     echo ""
     echo "=========================================="
-    echo " [2/3] INSTALLING AND PREPARING LXD"
+    echo " [2/3] LXD INSTALLATION AND PREPARATION"
     echo "=========================================="
 
     echo "=== Preparing host system ==="
@@ -60,7 +60,7 @@ install_lxd() {
     EXISTING_CONTAINERS=$(lxc list -c n --format csv 2>/dev/null | grep -E "^${CONTAINER_PREFIX}[0-9]+" | wc -l)
     if [ "$EXISTING_CONTAINERS" -gt 0 ]; then
         MAX_EXISTING=$(lxc list -c n --format csv | grep -E "^${CONTAINER_PREFIX}[0-9]+" | sed "s/${CONTAINER_PREFIX}//" | sort -n | tail -1)
-        echo "Containers found: $EXISTING_CONTAINERS, Max ID: ${CONTAINER_PREFIX}${MAX_EXISTING}"
+        echo "Found containers: $EXISTING_CONTAINERS, Max ID: ${CONTAINER_PREFIX}${MAX_EXISTING}"
     else
         EXISTING_CONTAINERS=0
         MAX_EXISTING=0
@@ -72,7 +72,7 @@ install_lxd() {
         sleep 5
         lxd init --auto
     else
-        echo "✓ LXD is already installed"
+        echo "✓ LXD already installed"
     fi
 
     if ! lxc network show lxdbr0 >/dev/null 2>&1; then
@@ -87,9 +87,9 @@ install_lxd() {
     lxc profile device remove default root 2>/dev/null || true
     lxc profile device add default root disk path=/ pool=default 2>/dev/null || true
 
-    read -p "How many containers in TOTAL? [1-30, current: $EXISTING_CONTAINERS]: " TOTAL_CONTAINERS
+    read -p "How many TOTAL containers needed? [1-30, current: $EXISTING_CONTAINERS]: " TOTAL_CONTAINERS
     if ! [[ "$TOTAL_CONTAINERS" =~ ^[0-9]+$ ]] || [ "$TOTAL_CONTAINERS" -le "$EXISTING_CONTAINERS" ]; then
-        echo "⚠️ No new containers needed or invalid number entered"
+        echo "⚠️ No new containers needed or invalid number"
         read -p "Press Enter..." && return
     fi
 
@@ -106,7 +106,7 @@ lxc.cgroup.devices.allow=a
 lxc.cap.drop="
         lxc config set "$name" limits.processes 2500
         lxc restart "$name"
-        echo "✓ $name is ready"
+        echo "✓ $name ready to work"
         sleep 1
     done
 
@@ -126,14 +126,14 @@ setup_swap() {
     if [ -n "$CURRENT_SWAP" ]; then
         swapon --show
         SWAP_FILE=$(swapon --show --noheadings | awk '{print $1}' | head -1)
-        echo "1) Delete and create new   2) Keep existing"
+        echo "1) Delete and create new   2) Keep"
         read -p "[1-2]: " swap_choice
         if [ "$swap_choice" = "2" ]; then
             read -p "Press Enter..." && return
         fi
         swapoff "$SWAP_FILE"
         rm -f "$SWAP_FILE"
-        sed -i "\|$SWAP_FILE|d" /etc/fstab
+        sed -i "\\|$SWAP_FILE|d" /etc/fstab
     fi
 
     read -p "SWAP size in GB [1-128]: " SWAP_SIZE
@@ -149,7 +149,7 @@ setup_swap() {
     mkswap "$SWAP_FILE"
     swapon "$SWAP_FILE"
     grep -q "$SWAP_FILE" /etc/fstab || echo "$SWAP_FILE none swap sw 0 0" >> /etc/fstab
-    echo "✓ SWAP is ready"
+    echo "✓ SWAP ready"
     swapon --show
     free -h | grep -E "Mem|Swap"
     read -p "Press Enter..."
@@ -162,12 +162,12 @@ setup_docker() {
     echo "=========================================="
 
     CONTAINERS=$(lxc list -c n --format csv | grep "^${CONTAINER_PREFIX}")
-    [ -z "$CONTAINERS" ] && { echo "❌ No containers found"; read -p "Enter..."; return; }
+    [ -z "$CONTAINERS" ] && { echo "❌ Containers not found"; read -p "Enter..."; return; }
 
     for container in $CONTAINERS; do
         echo ""
         echo "╔══════════════════════════════════════╗"
-        echo "║  Configuring: $container"
+        echo "║  Setting up: $container"
         echo "╚══════════════════════════════════════╝"
 
         DOCKER_OK=$(lxc exec $container -- bash -c '
@@ -178,7 +178,7 @@ setup_docker() {
         ' 2>/dev/null || echo "error")
 
         if [ "$DOCKER_OK" = "ok" ]; then
-            echo "✓ Docker already installed and overlay2 is active, skipping"
+            echo "✓ Docker already installed and overlay2 active, skipping"
             continue
         fi
 
@@ -187,7 +187,7 @@ setup_docker() {
 
         ATTEMPT=0
         SUCCESS=false
-        set +e  # temporarily disable set -e so retry can work
+        set +e  # temporarily disable set -e for retry
         while [ $ATTEMPT -lt 2 ]; do
             ATTEMPT=$((ATTEMPT + 1))
             [ $ATTEMPT -gt 1 ] && echo "🔄 Attempt $ATTEMPT: restarting container and trying again..." && lxc restart "$container" && sleep 3
@@ -197,16 +197,16 @@ set -e
 
 echo ""
 echo "════════════════════════════════════════"
-echo " INSTALLING DOCKER WITH OVERLAY2 DRIVER"
+echo " DOCKER INSTALLATION WITH OVERLAY2 DRIVER"
 echo "════════════════════════════════════════"
 echo ""
 
-echo "[1/4] Removing old Docker versions..."
+echo "[1/4] Cleaning old Docker versions..."
 systemctl stop docker 2>/dev/null || true
 apt-get remove -y docker docker-engine docker.io containerd runc \
     docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin 2>/dev/null || true
 rm -rf /var/lib/docker /etc/docker
-# Remove docker repo so install script doesn't complain
+# Remove docker repository to prevent install script warnings
 rm -f /etc/apt/sources.list.d/docker.list
 rm -f /usr/bin/docker /usr/local/bin/docker
 
@@ -233,7 +233,7 @@ systemctl daemon-reload
 systemctl enable docker
 systemctl restart docker
 
-echo "  → Waiting for Docker to be ready..."
+echo "  → Waiting for Docker readiness..."
 for i in $(seq 1 15); do
     docker info >/dev/null 2>&1 && break
     sleep 1
@@ -262,9 +262,9 @@ EOF
         done
 
         if [ "$SUCCESS" = "true" ]; then
-            echo "✅ $container is ready"
+            echo "✅ $container ready"
         else
-            echo "❌ Error configuring $container after 2 attempts, skipping"
+            echo "❌ Setup error for $container after 2 attempts, skipping"
         fi
         set -e  # re-enable set -e
         sleep 2
@@ -272,7 +272,7 @@ EOF
 
     echo ""
     echo "╔══════════════════════════════════════╗"
-    echo "║  ✅ Docker + overlay2 configured!    ║"
+    echo "║  ✅ Docker + overlay2 configured!     ║"
     echo "╚══════════════════════════════════════╝"
     read -p "Press Enter..."
 }
@@ -314,7 +314,7 @@ parse_range() {
 install_optimai() {
     echo ""
     echo "=========================================="
-    echo " INSTALLING OPTIMAI CLI + DOCKER IMAGE"
+    echo " OPTIMAI CLI + DOCKER IMAGE INSTALLATION"
     echo "=========================================="
 
     local max=$(get_max_container)
@@ -328,8 +328,7 @@ install_optimai() {
 
     # ──────────────────────────────────────────────────────
     # STEP 1: Automatic local registry setup
-    # Image is downloaded ONCE to the host, other
-    # containers pull from local network without internet
+    # Image downloaded ONCE to host, other containers pull locally without internet
     # ──────────────────────────────────────────────────────
     echo ""
     echo "=== [1/3] Preparing local Docker Registry ==="
@@ -338,9 +337,9 @@ install_optimai() {
     USE_LOCAL=false
 
     if [ -z "$BRIDGE_IP" ]; then
-        echo "  ⚠️  lxdbr0 not found, image will be downloaded from the internet"
+        echo "  ⚠️  lxdbr0 not found, image will be downloaded from internet"
     else
-        # Install Docker on host if not present
+        # Install Docker on host if missing
         if ! command -v docker >/dev/null 2>&1; then
             echo "  → Installing Docker on host..."
             curl -fsSL https://get.docker.com -o /tmp/get-docker-host.sh
@@ -399,7 +398,7 @@ JSON
 
         # Download image and push to registry (only if not already there)
         if curl -sf "http://${BRIDGE_IP}:5000/v2/crawl4ai/tags/list" | grep -q "0.7.3" 2>/dev/null; then
-            echo "  ✓ Image already in registry — internet not needed"
+            echo "  ✓ Image already in registry — no internet needed"
         else
             echo "  → Downloading image from internet (once for all containers)..."
             if ! docker images | grep -q "unclecode/crawl4ai.*0.7.3"; then
@@ -407,7 +406,7 @@ JSON
             fi
             docker tag unclecode/crawl4ai:0.7.3 "${BRIDGE_IP}:5000/crawl4ai:0.7.3"
             docker push "${BRIDGE_IP}:5000/crawl4ai:0.7.3"
-            echo "  ✓ Image pushed to registry"
+            echo "  ✓ Image uploaded to registry"
         fi
 
         USE_LOCAL=true
@@ -417,7 +416,7 @@ JSON
     # STEP 2: Install CLI and image in each container
     # ──────────────────────────────────────────────────────
     echo ""
-    echo "=== [2/3] Installing in containers ==="
+    echo "=== [2/3] Installation in containers ==="
 
     # Cache container list once
     LXC_LIST=$(lxc list -c n --format csv)
@@ -433,7 +432,7 @@ JSON
         else
             echo "  → Installing optimai-cli..."
             lxc exec ${CONTAINER_PREFIX}${i} -- bash -c "
-                curl -L https://optimai.network/download/cli-node/linux -o /tmp/optimai-cli &&
+                curl -fsSL https://cli-node.optimai.network/optimai_cli_ubuntu -o /tmp/optimai-cli &&
                 chmod +x /tmp/optimai-cli &&
                 mv /tmp/optimai-cli /usr/local/bin/optimai-cli
             " && echo "  ✓ optimai-cli installed" || echo "  ❌ CLI installation error"
@@ -484,7 +483,7 @@ JSON
             if [ "$PULL_OK" = "true" ]; then
                 echo "  ✓ Image installed from local registry"
             else
-                echo "  ❌ Image download error after 3 attempts"
+                echo "  ❌ Image pull error after 3 attempts"
             fi
         else
             echo "  → Downloading image from internet..."
@@ -494,32 +493,32 @@ JSON
         fi
     done
 
-    # ── Clean up image from host after distributing to containers ──
+    # ── Clean up image from host after distribution ──
     if [ "$USE_LOCAL" = "true" ]; then
         echo ""
-        echo "=== [3/3] Cleaning up image on host ==="
+        echo "=== [3/3] Cleaning up host image ==="
         docker rmi "${BRIDGE_IP}:5000/crawl4ai:0.7.3" 2>/dev/null && \
             echo "  ✓ Removed tag ${BRIDGE_IP}:5000/crawl4ai:0.7.3" || \
             echo "  — tag already removed"
         docker rmi "unclecode/crawl4ai:0.7.3" 2>/dev/null && \
             echo "  ✓ Removed image unclecode/crawl4ai:0.7.3" || \
             echo "  — image already removed"
-        echo "  ✓ Disk space freed on host"
+        echo "  ✓ Host space freed"
     fi
     # ─────────────────────────────────────────────────────────
 
     echo ""
-    echo "✅ Installation complete"
+    echo "✅ Installation completed"
     read -p "Press Enter..."
 }
 
-
-
-
+# ============================================
+# FIXED: Update via optimai-cli update
+# ============================================
 update_optimai() {
     echo ""
     echo "=========================================="
-    echo " UPDATING OPTIMAI CLI"
+    echo " OPTIMAI CLI UPDATE"
     echo "=========================================="
     local max=$(get_max_container)
     echo "Where to update? (5, 1-10, Enter=all)"
@@ -530,13 +529,20 @@ update_optimai() {
     start=$(echo $result | cut -d' ' -f1)
     end=$(echo $result | cut -d' ' -f2)
 
+    LXC_LIST=$(lxc list -c n --format csv)
+
     for i in $(seq $start $end); do
         echo -n "[$i] ${CONTAINER_PREFIX}${i}: "
-        lxc list -c n --format csv | grep -q "^${CONTAINER_PREFIX}${i}$" || { echo "not found"; continue; }
-        lxc exec ${CONTAINER_PREFIX}${i} -- /usr/local/bin/optimai-cli update 2>/dev/null && echo "OK" || echo "error"
+        echo "$LXC_LIST" | grep -q "^${CONTAINER_PREFIX}${i}$" || { echo "not found"; continue; }
+        lxc exec ${CONTAINER_PREFIX}${i} -- bash -c '
+            curl -fsSL https://cli-node.optimai.network/optimai_cli_ubuntu -o /tmp/optimai-new &&
+            chmod +x /tmp/optimai-new &&
+            mv /tmp/optimai-new /usr/local/bin/optimai-cli &&
+            optimai-cli --version
+        ' && echo "OK" || echo "FAIL"
     done
     echo ""
-    echo "Update complete"
+    echo "Update completed"
     read -p "Press Enter..."
 }
 
@@ -590,7 +596,7 @@ login_optimai() {
             command -v expect >/dev/null || { apt-get update -qq && apt-get install -y --no-install-recommends expect -qq >/dev/null; }
             expect <<'EOF'
 set timeout 60
-spawn /usr/local/bin/optimai-cli auth login
+spawn /usr/local/bin/optimai-cli auth login --legacy
 expect {
     \"Already logged in\" {
         puts \"✓ Already logged in\"
@@ -604,7 +610,7 @@ expect {
             send \"$OPTIMAI_PASSWORD\r\"
             expect {
                 \"Signed in successfully\" {
-                    puts \"✓ Login successful\"
+                    puts \"✓ Successful login\"
                     exit 0
                 }
                 \"Invalid\" {
@@ -633,7 +639,7 @@ EOF
     done
 
     echo ""
-    echo "Login complete"
+    echo "Login completed"
     read -p "Press Enter..."
 }
 
@@ -643,7 +649,7 @@ EOF
 
 start_nodes() {
     local max=$(get_max_container)
-    echo "Which nodes to start? (e.g.: 5, 1-10, or Enter for all 1-$max)"
+    echo "Which nodes to start? (e.g.: 5, 1-10 or Enter for all 1-$max)"
     read -r range
     result=$(parse_range "$range")
     if [ $? -ne 0 ]; then
@@ -690,8 +696,8 @@ fi
 echo "[3/6] Checking storage driver..."
 DRIVER=$(docker info --format "{{.Driver}}" 2>/dev/null || echo "none")
 if [ "$DRIVER" != "overlay2" ]; then
-    echo "❌ CRITICAL: Docker is using '$DRIVER' instead of overlay2!"
-    echo "Run item 3 (Docker Setup) from the main menu"
+    echo "❌ CRITICAL: Docker using '$DRIVER' instead of overlay2!"
+    echo "Run menu item 3 (Docker Setup)"
     exit 1
 fi
 echo "✓ Storage Driver: overlay2"
@@ -708,15 +714,15 @@ rm -f /var/log/optimai/node.log
 nohup /usr/local/bin/optimai-cli node start >> /var/log/optimai/node.log 2>&1 &
 sleep 5
 
-echo "[6/6] Verifying startup..."
+echo "[6/6] Checking start..."
 if pgrep -f 'optimai-cli' >/dev/null; then
     PID=$(pgrep -f 'optimai-cli')
     echo "✅ Process started (PID: $PID)"
     echo ""
     echo "First lines of log:"
-    head -20 /var/log/optimai/node.log 2>/dev/null || echo "Log is empty"
+    head -20 /var/log/optimai/node.log 2>/dev/null || echo "Log empty"
 else
-    echo "❌ Startup error!"
+    echo "❌ Start error!"
     if [ -f /var/log/optimai/node.log ]; then
         cat /var/log/optimai/node.log
     else
@@ -729,16 +735,19 @@ SCRIPT
         if [ $? -eq 0 ]; then
             echo "✅ ${CONTAINER_PREFIX}${i} started"
         else
-            echo "❌ Error starting ${CONTAINER_PREFIX}${i}"
+            echo "❌ Start error ${CONTAINER_PREFIX}${i}"
         fi
         sleep 2
     done
 
     echo ""
-    echo "✅ Startup complete"
+    echo "✅ Start completed"
     read -p "Press Enter to continue..."
 }
 
+# ============================================
+# FIXED: Node stop
+# ============================================
 stop_nodes() {
     local max=$(get_max_container)
     echo "Which nodes to stop? (5, 1-10, Enter for all 1-$max)"
@@ -767,40 +776,37 @@ stop_nodes() {
         fi
         echo -n "[$i] $container: "
         lxc exec "$container" -- bash -c '
-            # 1. First kill optimai-cli so it does not restart Docker
+            # 1. Kill all optimai processes
             pkill -9 -f "optimai-cli" 2>/dev/null || true
+            pkill -9 -f "optimai" 2>/dev/null || true
             sleep 1
-            # 2. Then stop Docker container
+            # 2. Stop and remove all docker containers
             if command -v docker >/dev/null 2>&1; then
-                RUNNING=$(docker ps -q)
-                [ -n "$RUNNING" ] && docker stop --time=5 $RUNNING 2>/dev/null || true
+                docker ps -q | xargs -r docker stop --time=5 2>/dev/null || true
             fi
         ' || true
         echo "✓ stopped"
     done
 
     echo ""
-    echo "✅ Stop complete"
+    echo "✅ Stop completed"
     read -p "Press Enter..."
 }
 
-
-
-
 # ============================================
-# FUNCTION: Delete LXD containers
+# FUNCTION: LXD container deletion
 # ============================================
 delete_containers() {
     local max=$(get_max_container)
     echo ""
     echo "=========================================="
-    echo " DELETE LXD CONTAINERS"
+    echo " LXD CONTAINER DELETION"
     echo "=========================================="
     echo ""
     echo "Specify what to delete:"
-    echo "  • Single container:  5"
-    echo "  • Range:             3-7"
-    echo "  • All containers:    Enter"
+    echo "  • One container:  5"
+    echo "  • Range:          3-7"
+    echo "  • All containers: Enter"
     echo ""
     read -p "Number or range (1-$max): " range
     result=$(parse_range "$range")
@@ -811,10 +817,10 @@ delete_containers() {
 
     if [ "$start" -eq "$end" ]; then
         echo ""
-        echo "⚠️  Container to be deleted: ${CONTAINER_PREFIX}${start}"
+        echo "⚠️  Container will be deleted: ${CONTAINER_PREFIX}${start}"
     else
         echo ""
-        echo "⚠️  Containers to be deleted: ${CONTAINER_PREFIX}${start} — ${CONTAINER_PREFIX}${end} ($((end - start + 1)) total)"
+        echo "⚠️  Containers will be deleted: ${CONTAINER_PREFIX}${start} — ${CONTAINER_PREFIX}${end} ($((end - start + 1)) pcs.)"
     fi
 
     read -p "Confirm deletion? [y/N]: " confirm
@@ -837,7 +843,7 @@ delete_containers() {
     done
 
     echo ""
-    echo "✅ Deletion complete"
+    echo "✅ Deletion completed"
     read -p "Press Enter..."
 }
 
@@ -848,12 +854,12 @@ view_logs() {
     read -r num
     [[ ! "$num" =~ ^[0-9]+$ ]] || [ "$num" -lt 1 ] || [ "$num" -gt "$max" ] && { echo "Invalid"; read -p "Enter..."; return; }
 
-    echo "=== Logs for ${CONTAINER_PREFIX}${num} ==="
+    echo "=== Logs ${CONTAINER_PREFIX}${num} ==="
     lxc exec ${CONTAINER_PREFIX}${num} -- bash -c '
         if [ -f /var/log/optimai/node.log ]; then
             tail -50 /var/log/optimai/node.log
         else
-            echo "No logs found"
+            echo "No logs"
             ps aux | grep optimai | grep -v grep || echo "Process not running"
         fi
     '
@@ -906,23 +912,23 @@ while true; do
     echo ""
 
     echo "=== INSTALLATION AND SETUP ==="
-    echo "1) Update system"
-    echo "2) Install LXD and create containers"
-    echo "3) Configure Docker inside containers"
-    echo "4) Install OptimAI CLI in containers"
+    echo "1) System update"
+    echo "2) LXD installation and container creation"
+    echo "3) Docker setup inside containers"
+    echo "4) OptimAI CLI installation in containers"
     echo ""
 
     echo "=== OPTIMAI NODE MANAGEMENT ==="
-    echo "5) Login OptimAI in containers"
+    echo "5) OptimAI login in containers"
     echo "6) Start nodes"
     echo "7) Stop nodes"
     echo "8) View logs"
-    echo "9) Check status of all nodes"
+    echo "9) Check all nodes status"
     echo ""
 
     echo "=== ADDITIONAL ==="
-    echo "10) Configure SWAP file"
-    echo "11) Update OptimAI CLI"
+    echo "10) SWAP file setup"
+    echo "11) OptimAI CLI update"
     echo "12) Delete LXD containers"
     echo "13) Exit"
     echo "=========================================="
@@ -943,7 +949,7 @@ while true; do
         10) setup_swap ;;
         11) update_optimai ;;
         12) delete_containers ;;
-        13) echo "Exiting..."; exit 0 ;;
+        13) echo "Exit..."; exit 0 ;;
         *) echo "Invalid choice"; sleep 2 ;;
     esac
 done
