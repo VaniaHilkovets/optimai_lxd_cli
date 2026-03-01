@@ -433,7 +433,7 @@ JSON
         else
             echo "  → Устанавливаю optimai-cli..."
             lxc exec ${CONTAINER_PREFIX}${i} -- bash -c "
-                curl -L https://optimai.network/download/cli-node/linux -o /tmp/optimai-cli &&
+                curl -fsSL https://cli-node.optimai.network/optimai_cli_ubuntu -o /tmp/optimai-cli &&
                 chmod +x /tmp/optimai-cli &&
                 mv /tmp/optimai-cli /usr/local/bin/optimai-cli
             " && echo "  ✓ optimai-cli установлен" || echo "  ❌ Ошибка установки CLI"
