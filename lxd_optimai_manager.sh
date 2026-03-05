@@ -678,11 +678,20 @@ set -e
 
 mkdir -p /var/log/optimai
 
+echo "[0/6] Проверка — нода уже запущена?..."
+if pgrep -f 'optimai-cli' >/dev/null 2>&1 && docker ps 2>/dev/null | grep -q "optimai_crawl4ai"; then
+    echo "✅ Нода уже работает, пропускаю"
+    exit 0
+fi
+
 echo "[1/6] Остановка старых процессов..."
 pkill -9 -f 'optimai-cli' 2>/dev/null || true
+sleep 2
 docker stop optimai_crawl4ai_0_7_3 2>/dev/null || true
 docker rm optimai_crawl4ai_0_7_3 2>/dev/null || true
-sleep 2
+# Чистим lock-файл
+rm -f /root/.local/state/optimai-cli/node_cli.lock 2>/dev/null || true
+sleep 3
 
 echo "[2/6] Проверка Docker..."
 if ! systemctl is-active docker >/dev/null 2>&1; then
@@ -713,22 +722,19 @@ echo "[5/6] Запуск ноды..."
 cd /root
 rm -f /var/log/optimai/node.log
 nohup /usr/local/bin/optimai-cli node start >> /var/log/optimai/node.log 2>&1 &
-sleep 5
+sleep 15
 
 echo "[6/6] Проверка запуска..."
-if pgrep -f 'optimai-cli' >/dev/null; then
-    PID=$(pgrep -f 'optimai-cli')
-    echo "✅ Процесс запущен (PID: $PID)"
+if grep -q "crawler service ready\|heartbeat sent\|Starting services" /var/log/optimai/node.log 2>/dev/null; then
+    echo "✅ Нода запущена успешно"
     echo ""
-    echo "Первые строки лога:"
-    head -20 /var/log/optimai/node.log 2>/dev/null || echo "Лог пуст"
+    echo "Последние строки лога:"
+    tail -10 /var/log/optimai/node.log
+elif grep -q "Another node instance" /var/log/optimai/node.log 2>/dev/null; then
+    echo "⚠️ Уже запущена другая нода"
 else
     echo "❌ Ошибка запуска!"
-    if [ -f /var/log/optimai/node.log ]; then
-        cat /var/log/optimai/node.log
-    else
-        echo "Лог файл не создан"
-    fi
+    cat /var/log/optimai/node.log 2>/dev/null || echo "Лог пуст"
     exit 1
 fi
 SCRIPT
@@ -777,15 +783,11 @@ stop_nodes() {
         fi
         echo -n "[$i] $container: "
         lxc exec "$container" -- bash -c '
-            # 1. Убиваем все процессы optimai
             pkill -9 -f "optimai-cli" 2>/dev/null || true
-            pkill -9 -f "optimai" 2>/dev/null || true
-            sleep 1
-            # 2. Останавливаем и удаляем все docker контейнеры
-            if command -v docker >/dev/null 2>&1; then
-                docker ps -q | xargs -r docker stop --time=5 2>/dev/null || true
-            fi
-        ' || true
+            sleep 2
+            docker ps -q | xargs -r docker stop --time=5 2>/dev/null || true
+            rm -f /root/.local/state/optimai-cli/node_cli.lock 2>/dev/null || true
+        '
         echo "✓ остановлен"
     done
 
