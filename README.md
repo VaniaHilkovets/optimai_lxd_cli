@@ -22,11 +22,12 @@ To run 30 nodes smoothly, we recommend the following configuration:
 * **OS:** Ubuntu 22.04 (Required)
 * **CPU:** 8 Cores+
 * **RAM:** 32 GB+
-* **Disk:** 100 GB SSD/NVMe
+* **Disk:** 250 GB SSD/NVMe
 
 ### Recommended VPS Providers:
-* [Lumadock](https://lumadock.com/aff.php?aff=107) (Optimized for node farming)
 * [Contabo](https://www.dpbolvw.net/click-101335050-13484397) (Reliable budget option)
+* [Lumadock](https://lumadock.com/aff.php?aff=107) (Optimized for node farming)
+
 
 ---
 
