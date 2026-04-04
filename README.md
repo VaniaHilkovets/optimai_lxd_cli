@@ -127,8 +127,3 @@ If you encounter any errors or need assistance, feel free to reach out:
 ## ⚠ Disclaimer
 
 Use this script at your own risk. Always monitor your VPS resource usage and node performance.
-
-```
-
-Если хочешь, я могу сразу сделать еще и **более продающую версию README**, чтобы выглядело жирнее для GitHub и лучше конвертило в установки.
-```
