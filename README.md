@@ -83,7 +83,7 @@ wget -O lxd_optimai_manager.sh https://raw.githubusercontent.com/VaniaHilkovets/
 
 ## 🛡 Watchdog for Auto-Restart of Failed Nodes
 
-To improve stability, you can use the **watchdog script**, which continuously monitors your OptimAI nodes and automatically restarts nodes that have crashed or become stuck.
+To improve stability, you can use the **watchdog script**, which continuously monitors your OptimAI nodes, automatically restarts nodes that have crashed or become stuck, and performs daily cleanup of temporary files and logs so they do not fill up your disk.
 
 This is especially useful when running many containers at once, because some nodes may occasionally freeze, stop responding, or silently fail over time.
 
@@ -108,6 +108,8 @@ tail -f /var/log/optimai_watchdog.log
 * Automatically monitors OptimAI nodes
 * Detects crashed or frozen nodes
 * Restarts failed nodes without manual intervention
+* Cleans temporary `_MEI*` folders created by the node inside containers once per day
+* Runs daily Docker cleanup, truncates Docker logs, and vacuums old journal logs to free disk space
 * Helps keep your farming stable 24/7
 
 > **Recommended:** Start the watchdog after all nodes are installed, logged in, and running.
