@@ -1,4 +1,4 @@
-Вот фулл готовый `README.md` с добавленным блоком про watchdog:
+
 
 ````markdown
 # OptimAI LXD Node Manager 🚀
