@@ -10,6 +10,7 @@ CHECK_INTERVAL=300     # секунд между полными циклами �
 LOG_STALE_SECONDS=600  # секунд без обновления лога = нода зависла
 LOG_FILE="/var/log/optimai_watchdog.log"
 LOCK_FILE="/tmp/optimai_watchdog.lock"
+DAILY_MAINTENANCE_STAMP="/var/tmp/optimai_watchdog.daily_maintenance"
 
 # ── Один экземпляр ──────────────────────────
 if [ -f "$LOCK_FILE" ] && kill -0 "$(cat "$LOCK_FILE")" 2>/dev/null; then
@@ -200,6 +201,53 @@ rotate_logs() {
 
 log "[WATCHDOG] Запущен (PID $$)"
 
+run_daily_maintenance() {
+    local max=$1
+    local lxc_list=$2
+    local today
+    local container
+    local state
+
+    today=$(date +%F)
+    if [ -f "$DAILY_MAINTENANCE_STAMP" ] && [ "$(cat "$DAILY_MAINTENANCE_STAMP" 2>/dev/null)" = "$today" ]; then
+        return 0
+    fi
+
+    log "[MAINT] Starting daily maintenance for containers 1-$max"
+
+    for i in $(seq 1 "$max"); do
+        container="${CONTAINER_PREFIX}${i}"
+        echo "$lxc_list" | grep -q "^${container}$" || continue
+
+        state=$(lxc list "$container" -c s --format csv 2>/dev/null | head -1)
+        if [ "$state" != "RUNNING" ]; then
+            log "[MAINT] $container skipped, state: ${state:-unknown}"
+            continue
+        fi
+
+        log "[MAINT] ===== $container ====="
+
+        lxc exec "$container" -- bash -c '
+            echo "-- Cleanup /tmp/_MEI* --"
+            find /tmp -maxdepth 1 -type d -name "_MEI*" -exec rm -rf {} + 2>/dev/null || true
+        ' >> "$LOG_FILE" 2>&1 || log "[MAINT] $container failed during _MEI cleanup"
+
+        lxc exec "$container" -- bash -c '
+            echo "-- Docker prune --"
+            docker system prune -af --volumes
+            echo "-- Docker logs --"
+            find /var/lib/docker/containers/ -name "*.log" -exec truncate -s 0 {} \;
+            echo "-- Journal --"
+            journalctl --vacuum-time=2d
+            echo "-- Disk after --"
+            df -h /
+        ' >> "$LOG_FILE" 2>&1 || log "[MAINT] $container failed during docker/journal cleanup"
+    done
+
+    echo "$today" > "$DAILY_MAINTENANCE_STAMP"
+    log "[MAINT] Daily maintenance complete"
+}
+
 while true; do
 
     MAX=$(get_max_container)
@@ -264,6 +312,7 @@ while true; do
     fi
 
     rotate_logs "$MAX" "$LXC_LIST"
+    run_daily_maintenance "$MAX" "$LXC_LIST"
     log "[WATCHDOG] Следующая проверка через ${CHECK_INTERVAL} сек..."
     sleep "$CHECK_INTERVAL"
 
