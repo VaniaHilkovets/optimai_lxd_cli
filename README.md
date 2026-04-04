@@ -1,6 +1,4 @@
 
-
-````markdown
 # OptimAI LXD Node Manager 🚀
 
 [![OptimAI](https://img.shields.io/badge/Project-OptimAI-blue.svg)](https://optimai.network)
